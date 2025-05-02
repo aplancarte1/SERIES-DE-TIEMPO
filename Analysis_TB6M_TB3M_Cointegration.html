@@ -1,0 +1,17 @@
+# Install nbconvert if not already installed (usually pre-installed in Colab)
+!pip install nbconvert
+
+import nbconvert
+import os
+from google.colab import files
+
+# Get the name of the current notebook
+# Colab stores the notebook in /content with a .ipynb extension
+notebook_name = os.path.basename(os.getenv('COLAB_JUPYTER_NOTEBOOK_PATH', 'notebook.ipynb'))
+
+# Convert the notebook to HTML using nbconvert
+!jupyter nbconvert --to html "{notebook_name}"
+
+# Download the generated HTML file
+html_file = notebook_name.replace('.ipynb', '.html')
+files.download(html_file)
