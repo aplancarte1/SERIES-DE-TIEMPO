@@ -1,0 +1,325 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIMA Model for M1 Money Supply Analysis</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+        }
+        h2 {
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 5px;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border: 1px solid #ddd;
+        }
+        code {
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .interpretation {
+            background: #e9f7ef;
+            padding: 15px;
+            border-left: 5px solid #28a745;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .plot-placeholder {
+            background: #e7f3ff;
+            padding: 15px;
+            border-left: 5px solid #007bff;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ARIMA Model for M1 Money Supply Analysis</h1>
+        <p>This document outlines the steps to fit an ARIMA model to the M1 money supply dataset (January 1951 to September 1991), including code, interpretations, and placeholders for generated plots.</p>
+
+        <h2>Step 1: Loading and Preparing the Dataset</h2>
+        <div class="interpretation">
+            The M1 money supply data (in billions USD) from January 1951 to September 1991 is loaded into a DataFrame, with TIME set as the index. This step ensures the data is structured as a time series, with each row representing a monthly observation. Proper indexing is critical for time series analysis, as ARIMA models require sequential data to capture temporal dependencies.
+        </div>
+        <pre><code>
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.tsa.arima.model import ARIMA
+import warnings
+warnings.filterwarnings("ignore")
+
+# Try importing pmdarima
+try:
+    from pmdarima import auto_arima
+    pmdarima_available = True
+except ImportError:
+    print("pmdarima not found. Please install it using: !pip install pmdarima")
+    print("Falling back to manual ARIMA parameter selection.")
+    pmdarima_available = False
+
+# Load data
+data = {
+    'TIME': range(1, 490),
+    'MONEY': [
+        138.89, 139.39, 139.74, 139.69, 140.68, 141.17, 141.7, 141.9, 141.01, 140.47,
+        # ... (data truncated for brevity, full dataset included in original code)
+        1102.01, 1108.4, 1104.75, 1101.11, 1099.53, 1102.4, 1093.46
+    ]
+}
+df = pd.DataFrame(data)
+df.set_index('TIME', inplace=True)
+        </code></pre>
+
+        <h2>Step 2: Visualizing the Raw Time Series</h2>
+        <div class="interpretation">
+            The raw M1 money supply data is plotted to inspect its behavior, revealing trends, seasonality, or non-stationarity. The plot typically shows an upward trend, suggesting non-stationarity, which informs the need for transformations (e.g., differencing or logging) to make the series suitable for ARIMA modeling. This visual inspection is a crucial first step in understanding the data's characteristics.
+        </div>
+        <pre><code>
+plt.figure(figsize=(12, 6))
+plt.plot(df['MONEY'], label='M1 Money Supply')
+plt.title('M1 Money Supply (Billions USD)')
+plt.xlabel('Time (Months from Jan 1951)')
+plt.ylabel('Money Supply')
+plt.legend()
+plt.show()
+        </code></pre>
+        <div class="plot-placeholder">
+            <strong>Plot: Raw Time Series</strong><br>
+            This plot displays the M1 money supply over time, showing an upward trend from 1951 to 1991, indicating non-stationarity.
+        </div>
+
+        <h2>Step 3: Testing for Stationarity with the ADF Test</h2>
+        <div class="interpretation">
+            The Augmented Dickey-Fuller (ADF) test is applied to assess whether the series is stationary. A high p-value (> 0.05) indicates non-stationarity, as seen in the original M1 data due to its trend. Stationarity is a prerequisite for ARIMA modeling, as non-stationary series can lead to unreliable forecasts. This test guides the need for transformations to achieve stationarity.
+        </div>
+        <pre><code>
+def adf_test(series, title=''):
+    result = adfuller(series.dropna())
+    print(f'ADF Test for {title}:')
+    print(f'ADF Statistic: {result[0]}')
+    print(f'p-value: {result[1]}')
+    print('Critical Values:')
+    for key, value in result[4].items():
+        print(f'\t{key}: {value}')
+    print(f'Stationary: {result[1] < 0.05}\n')
+
+adf_test(df['MONEY'], 'Original Series')
+        </code></pre>
+
+        <h2>Step 4: Transforming the Series for Stationarity</h2>
+        <div class="interpretation">
+            To achieve stationarity, a logarithmic transformation is applied to stabilize variance, followed by first differencing to remove the trend. The ADF test on the log-differenced series typically yields a low p-value (< 0.05), confirming stationarity. This step determines the differencing order (d=1) for the ARIMA model, ensuring the series meets the stationarity requirement.
+        </div>
+        <pre><code>
+df['log_MONEY'] = np.log(df['MONEY'])
+adf_test(df['log_MONEY'], 'Log Transformed Series')
+
+df['log_diff_MONEY'] = df['log_MONEY'].diff()
+adf_test(df['log_diff_MONEY'], 'Log Differenced Series')
+        </code></pre>
+
+        <h2>Step 5: Plotting the Transformed Series</h2>
+        <div class="interpretation">
+            The log-differenced series is plotted to visually confirm stationarity. The absence of trends and fluctuations around a constant mean indicate that the series is ready for ARIMA modeling. This visualization validates the effectiveness of the transformations and provides confidence in proceeding with model identification.
+        </div>
+        <pre><code>
+plt.figure(figsize=(12, 6))
+plt.plot(df['log_diff_MONEY'], label='Log Differenced M1 Money Supply')
+plt.title('Log Differenced M1 Money Supply')
+plt.xlabel('Time (Months from Jan 1951)')
+plt.ylabel('Log Differenced Value')
+plt.legend()
+plt.show()
+        </code></pre>
+        <div class="plot-placeholder">
+            <strong>Plot: Log-Differenced Series</strong><br>
+            This plot shows the log-differenced M1 money supply, fluctuating around zero with no clear trend, confirming stationarity.
+        </div>
+
+        <h2>Step 6: Identifying ARIMA Parameters with ACF and PACF Plots</h2>
+        <div class="interpretation">
+            Autocorrelation Function (ACF) and Partial Autocorrelation Function (PACF) plots of the log-differenced series are generated to determine the AR (p) and MA (q) orders. Significant lags in the PACF suggest the number of AR terms (p), while significant lags in the ACF suggest the number of MA terms (q). For this data, significant lags at 1 and 2 often indicate p=2 and q=2, guiding manual parameter selection when automatic tools are unavailable.
+        </div>
+        <pre><code>
+plt.figure(figsize=(12, 6))
+plt.subplot(121)
+plot_acf(df['log_diff_MONEY'].dropna(), ax=plt.gca(), lags=40)
+plt.title('ACF of Log Differenced Series')
+plt.subplot(122)
+plot_pacf(df['log_diff_MONEY'].dropna(), ax=plt.gca(), lags=40)
+plt.title('PACF of Log Differenced Series')
+plt.tight_layout()
+plt.show()
+        </code></pre>
+        <div class="plot-placeholder">
+            <strong>Plot: ACF and PACF</strong><br>
+            These plots show the autocorrelation and partial autocorrelation of the log-differenced series, with significant lags at positions 1 and 2, suggesting p=2 and q=2 for the ARIMA model.
+        </div>
+
+        <h2>Step 7: Selecting the ARIMA Model</h2>
+        <div class="interpretation">
+            If pmdarima is available, auto_arima is used to automatically select the optimal (p, d, q) parameters by minimizing the Akaike Information Criterion (AIC), with d=1 based on the differencing needed for stationarity. If pmdarima is unavailable, an ARIMA(2,1,2) model is chosen based on ACF/PACF analysis. This step ensures the model is appropriately specified to capture the series' autocorrelation structure.
+        </div>
+        <pre><code>
+if pmdarima_available:
+    model = auto_arima(df['log_MONEY'],
+                       start_p=0, start_q=0,
+                       max_p=5, max_q=5,
+                       d=1,
+                       seasonal=False,
+                       trace=True,
+                       error_action='ignore',
+                       suppress_warnings=True,
+                       stepwise=True)
+    order = model.order
+    print(model.summary())
+else:
+    order = (2, 1, 2)
+    print(f"Using manual ARIMA order: {order} (install pmdarima for auto-selection)")
+        </code></pre>
+
+        <h2>Step 8: Fitting the ARIMA Model</h2>
+        <div class="interpretation">
+            The ARIMA model is fitted to the log-transformed M1 money supply data using the selected (p, d, q) parameters. The model estimates coefficients for the AR and MA terms, modeling the series' dynamics. A well-fitted model effectively captures the underlying patterns, preparing the data for residual analysis and forecasting.
+        </div>
+        <pre><code>
+fitted_model = ARIMA(df['log_MONEY'], order=order).fit()
+        </code></pre>
+
+        <h2>Step 9: Validating the Model with Residual Analysis</h2>
+        <div class="interpretation">
+            Residuals from the fitted ARIMA model are analyzed to ensure the model is adequate. The residual plot should resemble white noise with no clear patterns, and the ACF of residuals should show no significant lags. This indicates that the model has captured most of the autocorrelation in the data. Significant residual patterns would suggest the need to revise the model parameters.
+        </div>
+        <pre><code>
+residuals = fitted_model.resid
+plt.figure(figsize=(12, 6))
+plt.subplot(211)
+plt.plot(residuals)
+plt.title('Residuals of ARIMA Model')
+plt.subplot(212)
+plot_acf(residuals, ax=plt.gca(), lags=40)
+plt.title('ACF of Residuals')
+plt.tight_layout()
+plt.show()
+        </code></pre>
+        <div class="plot-placeholder">
+            <strong>Plot: Residuals and ACF of Residuals</strong><br>
+            The residual plot shows model errors, ideally resembling white noise. The ACF plot of residuals should show no significant lags, confirming the model has captured the series' autocorrelation.
+        </div>
+
+        <h2>Step 10: Forecasting Future Values</h2>
+        <div class="interpretation">
+            The fitted ARIMA model is used to forecast the M1 money supply for the next 12 months. Since the model was fitted on log-transformed data, predictions and 95% confidence intervals are exponentiated to return to the original scale (billions USD). This step provides actionable predictions, with confidence intervals quantifying the uncertainty of the forecasts.
+        </div>
+        <pre><code>
+forecast = fitted_model.get_forecast(steps=12)
+forecast_mean = np.exp(forecast.predicted_mean)
+conf_int = np.exp(forecast.conf_int())
+        </code></pre>
+
+        <h2>Step 11: Visualizing the Forecast</h2>
+        <div class="interpretation">
+            The historical M1 money supply is plotted alongside the 12-month forecast, with the forecast shown as a distinct line and the 95% confidence interval as a shaded area. This visualization illustrates how the forecast extends the historical trend and highlights increasing uncertainty (widening intervals) further into the future, aiding interpretation of the predictions.
+        </div>
+        <pre><code>
+forecast_index = range(df.index[-1] + 1, df.index[-1] + 13)
+plt.figure(figsize=(12, 6))
+plt.plot(df['MONEY'], label='Historical M1 Money Supply')
+plt.plot(forecast_index, forecast_mean, label='Forecast', color='red')
+plt.fill_between(forecast_index,
+                 conf_int.iloc[:, 0],
+                 conf_int.iloc[:, 1],
+                 color='pink', alpha=0.3, label='95% Confidence Interval')
+plt.title('M1 Money Supply Forecast')
+plt.xlabel('Time (Months from Jan 1951)')
+plt.ylabel('Money Supply (Billions USD)')
+plt.legend()
+plt.show()
+        </code></pre>
+        <div class="plot-placeholder">
+            <strong>Plot: Forecast</strong><br>
+            This plot shows the historical M1 money supply with a 12-month forecast in red and a pink shaded 95% confidence interval, indicating prediction uncertainty.
+        </div>
+
+        <h2>Step 12: Summarizing Forecast Results</h2>
+        <div class="interpretation">
+            The forecast values are presented in a table, listing the predicted M1 money supply and the lower and upper bounds of the 95% confidence interval for each of the next 12 months. This numerical summary provides precise forecast estimates, facilitating detailed analysis or decision-making based on the model's predictions.
+        </div>
+        <pre><code>
+forecast_df = pd.DataFrame({
+    'Forecast': forecast_mean,
+    'Lower CI': conf_int.iloc[:, 0],
+    'Upper CI': conf_int.iloc[:, 1]
+}, index=forecast_index)
+print("\nForecast for next 12 periods:")
+print(forecast_df)
+        </code></pre>
+    </div>
+</body>
+</html>
